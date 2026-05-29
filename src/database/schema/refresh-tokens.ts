@@ -1,5 +1,6 @@
 import { relations } from 'drizzle-orm';
 import {
+  boolean,
   index,
   pgTable,
   text,
@@ -26,9 +27,17 @@ export const refreshTokens = pgTable(
       .notNull()
       .defaultNow(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    absoluteExpiresAt: timestamp('absolute_expires_at', {
+      withTimezone: true,
+    }).notNull(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
 
     replacedById: uuid('replaced_by_id'),
+
+    rememberMe: boolean('remember_me').notNull().default(true),
 
     userAgent: text('user_agent'),
     ipAddress: text('ip_address'),

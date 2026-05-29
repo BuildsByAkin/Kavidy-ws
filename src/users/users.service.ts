@@ -11,7 +11,11 @@ import {
   type NewOAuthAccountRow,
   type OAuthAccountRow,
 } from '../database/schema/oauth-accounts';
-import { users, type UserRow } from '../database/schema/users';
+import {
+  users,
+  type NotificationPrefs,
+  type UserRow,
+} from '../database/schema/users';
 
 export interface CreateUserWithPasswordInput {
   email: string;
@@ -31,6 +35,7 @@ export interface CreateUserWithOAuthInput {
   dateOfBirth?: string | null;
   state?: string | null;
   country?: string;
+  onboardingStatus?: 'incomplete' | 'active';
 }
 
 export interface UpdateProfileInput {
@@ -38,6 +43,7 @@ export interface UpdateProfileInput {
   state?: string;
   country?: string;
   passwordHash?: string;
+  onboardingStatus?: 'incomplete' | 'active';
 }
 
 export interface LinkOAuthInput {
@@ -92,6 +98,16 @@ export class UsersService {
     return row ?? null;
   }
 
+  async findByDisplayName(displayName: string): Promise<UserRow | null> {
+    const normalized = displayName.trim().toLowerCase();
+    const [row] = await this.db
+      .select()
+      .from(users)
+      .where(sql`lower(${users.displayName}) = ${normalized}`)
+      .limit(1);
+    return row ?? null;
+  }
+
   async createWithPassword(
     input: CreateUserWithPasswordInput,
     tx?: DbExecutor,
@@ -130,6 +146,7 @@ export class UsersService {
         dateOfBirth: input.dateOfBirth ?? null,
         state: input.state ?? null,
         country: input.country ?? 'US',
+        onboardingStatus: input.onboardingStatus ?? 'active',
       })
       .returning();
     return row;
@@ -146,6 +163,8 @@ export class UsersService {
     if (input.country !== undefined) patch.country = input.country;
     if (input.passwordHash !== undefined)
       patch.passwordHash = input.passwordHash;
+    if (input.onboardingStatus !== undefined)
+      patch.onboardingStatus = input.onboardingStatus;
 
     const exec = tx ?? this.db;
     const [row] = await exec
@@ -199,5 +218,68 @@ export class UsersService {
       .update(users)
       .set({ lastLoginAt: now, updatedAt: now })
       .where(eq(users.id, userId));
+  }
+
+  async updateDisplayName(
+    userId: string,
+    displayName: string,
+    tx?: DbExecutor,
+  ): Promise<UserRow> {
+    const exec = tx ?? this.db;
+    const [row] = await exec
+      .update(users)
+      .set({ displayName, updatedAt: new Date() })
+      .where(eq(users.id, userId))
+      .returning();
+    return row;
+  }
+
+  async updateEmail(
+    userId: string,
+    email: string,
+    tx?: DbExecutor,
+  ): Promise<UserRow> {
+    const exec = tx ?? this.db;
+    const [row] = await exec
+      .update(users)
+      .set({
+        email: normalizeEmail(email),
+        emailVerified: false,
+        emailVerifiedAt: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, userId))
+      .returning();
+    return row;
+  }
+
+  async updateNotificationPrefs(
+    userId: string,
+    prefs: NotificationPrefs,
+    tx?: DbExecutor,
+  ): Promise<UserRow> {
+    const exec = tx ?? this.db;
+    const [row] = await exec
+      .update(users)
+      .set({ notificationPrefs: prefs, updatedAt: new Date() })
+      .where(eq(users.id, userId))
+      .returning();
+    return row;
+  }
+
+  async softDeleteAccount(userId: string, tx?: DbExecutor): Promise<UserRow> {
+    const exec = tx ?? this.db;
+    const now = new Date();
+    const [row] = await exec
+      .update(users)
+      .set({
+        status: 'deleted',
+        deletedAt: now,
+        notificationPrefs: { emailDigest: false, marketAlerts: false },
+        updatedAt: now,
+      })
+      .where(eq(users.id, userId))
+      .returning();
+    return row;
   }
 }

@@ -14,7 +14,9 @@ import { GeoModule } from './common/geo/geo.module';
 import type { Env } from './config/env';
 import { validateEnv } from './config/env';
 import { DatabaseModule } from './database/database.module';
+import { IdeasModule } from './ideas/ideas.module';
 import { SessionsModule } from './sessions/sessions.module';
+import { StreamersModule } from './streamers/streamers.module';
 import { UsersModule } from './users/users.module';
 import { WalletModule } from './wallet/wallet.module';
 
@@ -46,6 +48,8 @@ import { WalletModule } from './wallet/wallet.module';
     AuthModule,
     SessionsModule,
     WalletModule,
+    StreamersModule,
+    IdeasModule,
   ],
   controllers: [AppController],
   providers: [

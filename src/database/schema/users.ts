@@ -3,13 +3,24 @@ import {
   boolean,
   date,
   index,
+  jsonb,
   pgTable,
   text,
   timestamp,
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
-import { userRoleEnum, userStatusEnum } from './enums';
+import { onboardingStatusEnum, userRoleEnum, userStatusEnum } from './enums';
+
+export interface NotificationPrefs {
+  emailDigest: boolean;
+  marketAlerts: boolean;
+}
+
+export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
+  emailDigest: true,
+  marketAlerts: true,
+};
 
 export const users = pgTable(
   'users',
@@ -26,6 +37,9 @@ export const users = pgTable(
 
     status: userStatusEnum('status').notNull().default('active'),
     role: userRoleEnum('role').notNull().default('user'),
+    onboardingStatus: onboardingStatusEnum('onboarding_status')
+      .notNull()
+      .default('active'),
 
     displayName: text('display_name'),
     avatarUrl: text('avatar_url'),
@@ -35,6 +49,13 @@ export const users = pgTable(
     state: text('state'),
 
     lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+
+    notificationPrefs: jsonb('notification_prefs')
+      .$type<NotificationPrefs>()
+      .notNull()
+      .default(DEFAULT_NOTIFICATION_PREFS),
+
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
 
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
@@ -46,6 +67,9 @@ export const users = pgTable(
   (t) => [
     uniqueIndex('users_email_lower_uq').on(sql`lower(${t.email})`),
     uniqueIndex('users_username_lower_uq').on(sql`lower(${t.username})`),
+    uniqueIndex('users_display_name_lower_uq')
+      .on(sql`lower(${t.displayName})`)
+      .where(sql`${t.displayName} is not null`),
     index('users_status_idx').on(t.status),
     index('users_country_state_idx').on(t.country, t.state),
   ],

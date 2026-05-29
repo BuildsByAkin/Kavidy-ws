@@ -5,6 +5,7 @@ import { UsersModule } from '../users/users.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { GoogleService } from './google.service';
+import { CsrfGuard } from './guards/csrf.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { RolesGuard } from './guards/roles.guard';
 import { PasswordResetService } from './password-reset.service';
@@ -26,7 +27,8 @@ import { TokensService } from './tokens.service';
     JwtStrategy,
     JwtAuthGuard,
     RolesGuard,
+    CsrfGuard,
   ],
-  exports: [JwtAuthGuard, RolesGuard, AuthService, TokensService],
+  exports: [JwtAuthGuard, RolesGuard, CsrfGuard, AuthService, TokensService],
 })
 export class AuthModule {}

@@ -12,6 +12,17 @@ export const envSchema = z.object({
   JWT_REFRESH_SECRET: z.string().min(32),
   JWT_ACCESS_TTL: z.string().default('15m'),
   JWT_REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(30),
+  JWT_REFRESH_SHORT_TTL_HOURS: z.coerce.number().int().positive().default(12),
+  JWT_REFRESH_ABSOLUTE_TTL_DAYS: z.coerce.number().int().positive().default(90),
+  JWT_REFRESH_IDLE_TTL_DAYS: z.coerce.number().int().positive().default(14),
+
+  REFRESH_COOKIE_NAME: z.string().min(1).default('kvd_rt'),
+  CSRF_COOKIE_NAME: z.string().min(1).default('kvd_csrf'),
+  COOKIE_DOMAIN: z.string().optional(),
+  COOKIE_SECURE: z
+    .union([z.boolean(), z.string()])
+    .transform((v) => (typeof v === 'boolean' ? v : v.toLowerCase() === 'true'))
+    .optional(),
 
   GOOGLE_CLIENT_IDS: z
     .string()

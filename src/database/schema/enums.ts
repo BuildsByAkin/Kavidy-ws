@@ -9,6 +9,11 @@ export const userStatusEnum = pgEnum('user_status', [
 
 export const userRoleEnum = pgEnum('user_role', ['user', 'admin', 'curator']);
 
+export const onboardingStatusEnum = pgEnum('onboarding_status', [
+  'incomplete',
+  'active',
+]);
+
 export const oauthProviderEnum = pgEnum('oauth_provider', ['google']);
 
 export const walletCurrencyEnum = pgEnum('wallet_currency', [
@@ -39,3 +44,8 @@ export const depositStatusEnum = pgEnum('deposit_status', [
 ]);
 
 export const promoKindEnum = pgEnum('promo_kind', ['bonus_sweeps_locked']);
+
+export const streamerPlatformEnum = pgEnum('streamer_platform', [
+  'kick',
+  'twitch',
+]);

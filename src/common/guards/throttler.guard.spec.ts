@@ -3,14 +3,14 @@ import { KavidyThrottlerGuard } from './throttler.guard';
 describe('KavidyThrottlerGuard.getTracker', () => {
   const guard = new KavidyThrottlerGuard(
     { throttlers: [] },
-    { increment: jest.fn() } as never,
+    { increment: jest.fn() },
     { get: jest.fn(), getAllAndOverride: jest.fn() } as never,
   );
 
   const getTracker = (req: Record<string, unknown>) =>
-    (guard as unknown as { getTracker: (r: any) => Promise<string> }).getTracker(
-      req,
-    );
+    (
+      guard as unknown as { getTracker: (r: any) => Promise<string> }
+    ).getTracker(req);
 
   it('tracks authenticated users by user id', async () => {
     await expect(

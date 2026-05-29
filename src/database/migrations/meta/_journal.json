@@ -22,6 +22,34 @@
       "when": 1780013117018,
       "tag": "0002_wallet",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1780069635015,
+      "tag": "0003_rainy_elektra",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1780072512818,
+      "tag": "0004_refresh_token_cookie",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1780074128616,
+      "tag": "0005_ideas_wall",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1780075555399,
+      "tag": "0006_account_settings",
+      "breakpoints": true
     }
   ]
 }

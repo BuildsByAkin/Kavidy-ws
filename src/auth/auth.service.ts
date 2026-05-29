@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Inject,
   Injectable,
@@ -61,6 +62,7 @@ export class AuthService {
       dateOfBirth: string;
       state: string;
       country?: string;
+      rememberMe?: boolean;
     },
     ctx: RequestContext = {},
   ): Promise<AuthResult> {
@@ -110,7 +112,9 @@ export class AuthService {
       throw err;
     }
 
-    const tokens = await this.tokens.issueTokenPair(user, ctx);
+    const tokens = await this.tokens.issueTokenPair(user, ctx, undefined, {
+      rememberMe: input.rememberMe ?? true,
+    });
     await this.users.touchLastLogin(user.id);
     this.logger.log(`User signed up: ${user.id}`);
 
@@ -118,7 +122,7 @@ export class AuthService {
   }
 
   async login(
-    input: { email: string; password: string },
+    input: { email: string; password: string; rememberMe?: boolean },
     ctx: RequestContext = {},
   ): Promise<AuthResult> {
     const user = await this.users.findByEmail(input.email);
@@ -137,7 +141,10 @@ export class AuthService {
       throw new UnauthorizedException('Account is not active');
     }
 
-    const tokens = await this.tokens.issueTokenPair(user, ctx);
+    const tokens = await this.tokens.issueTokenPair(user, ctx, undefined, {
+      revokeOthers: true,
+      rememberMe: input.rememberMe ?? true,
+    });
     await this.users.touchLastLogin(user.id);
     this.logger.log(`User logged in: ${user.id}`);
 
@@ -145,7 +152,7 @@ export class AuthService {
   }
 
   async loginWithGoogle(
-    input: { idToken: string; username?: string },
+    input: { idToken: string; username?: string; rememberMe?: boolean },
     ctx: RequestContext = {},
   ): Promise<AuthResult> {
     const identity = await this.google.verifyIdToken(input.idToken);
@@ -159,7 +166,10 @@ export class AuthService {
       if (user.status !== 'active') {
         throw new UnauthorizedException('Account is not active');
       }
-      const tokens = await this.tokens.issueTokenPair(user, ctx);
+      const tokens = await this.tokens.issueTokenPair(user, ctx, undefined, {
+        revokeOthers: true,
+        rememberMe: input.rememberMe ?? true,
+      });
       await this.users.touchLastLogin(user.id);
       this.logger.log(`User logged in via Google: ${user.id}`);
       return { user: toPublicUser(user), tokens };
@@ -187,6 +197,7 @@ export class AuthService {
             emailVerified: identity.emailVerified,
             displayName: identity.name,
             avatarUrl: identity.picture,
+            onboardingStatus: 'incomplete',
           },
           tx,
         );
@@ -213,7 +224,9 @@ export class AuthService {
       throw err;
     }
 
-    const tokens = await this.tokens.issueTokenPair(user, ctx);
+    const tokens = await this.tokens.issueTokenPair(user, ctx, undefined, {
+      rememberMe: input.rememberMe ?? true,
+    });
     await this.users.touchLastLogin(user.id);
     this.logger.log(`User signed up via Google: ${user.id}`);
 
@@ -262,13 +275,44 @@ export class AuthService {
     this.logger.log(`Password reset completed for user ${userId}`);
   }
 
-  async completeProfile(
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<void> {
+    const user = await this.users.findById(userId);
+    if (!user || !user.passwordHash) {
+      throw new UnauthorizedException(
+        'Password change is not available for this account',
+      );
+    }
+    const ok = await argon2.verify(user.passwordHash, currentPassword);
+    if (!ok) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+    if (currentPassword === newPassword) {
+      throw new ConflictException(
+        'New password must be different from the current password',
+      );
+    }
+    const passwordHash = await argon2.hash(newPassword, ARGON2_OPTIONS);
+    await this.db.transaction(async (tx) => {
+      await this.users.updateProfile(user.id, { passwordHash }, tx);
+      await this.tokens.revokeAllForUser(user.id, undefined, tx);
+    });
+    this.logger.log(`Password changed for user ${user.id}`);
+  }
+
+  async onboard(
     userId: string,
     input: { dateOfBirth: string; state: string; country?: string },
   ): Promise<PublicUser> {
     const user = await this.users.findById(userId);
     if (!user) {
       throw new UnauthorizedException('User not found');
+    }
+    if (user.onboardingStatus !== 'incomplete') {
+      throw new BadRequestException('Onboarding is already complete');
     }
     const eligibility = this.eligibility.assertEligible({
       dateOfBirth: input.dateOfBirth,
@@ -279,7 +323,9 @@ export class AuthService {
       dateOfBirth: eligibility.dateOfBirth,
       state: eligibility.state,
       country: eligibility.country,
+      onboardingStatus: 'active',
     });
+    this.logger.log(`User onboarded: ${updated.id}`);
     return toPublicUser(updated);
   }
 

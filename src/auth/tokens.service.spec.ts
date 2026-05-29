@@ -36,7 +36,7 @@ interface MockState {
 }
 
 function makeDb(state: MockState): any {
-  return {
+  const exec = {
     insert: () => ({
       values: (v: any) => {
         state.inserts.push(v);
@@ -60,6 +60,10 @@ function makeDb(state: MockState): any {
       }),
     }),
   };
+  return {
+    ...exec,
+    transaction: (cb: (tx: any) => Promise<unknown>) => cb(exec),
+  };
 }
 
 async function buildService(state: MockState): Promise<TokensService> {
@@ -71,6 +75,9 @@ async function buildService(state: MockState): Promise<TokensService> {
           JWT_REFRESH_SECRET: 'b'.repeat(40),
           JWT_ACCESS_TTL: '15m',
           JWT_REFRESH_TTL_DAYS: 30,
+          JWT_REFRESH_SHORT_TTL_HOURS: 12,
+          JWT_REFRESH_ABSOLUTE_TTL_DAYS: 90,
+          JWT_REFRESH_IDLE_TTL_DAYS: 14,
         }) as Record<string, any>
       )[key],
   };
@@ -213,6 +220,125 @@ describe('TokensService', () => {
     ).rejects.toThrow(/expired/i);
   });
 
+  describe('issueTokenPair with revokeOthers', () => {
+    it('revokes all other active sessions when revokeOthers is true', async () => {
+      const state: MockState = { inserts: [], updates: [], selectResults: [] };
+      const svc = await buildService(state);
+
+      await svc.issueTokenPair(makeUser(), {}, undefined, {
+        revokeOthers: true,
+      });
+
+      // 1 update (revoke others) + 1 insert (new token)
+      expect(state.updates).toHaveLength(1);
+      expect(state.updates[0].revokedAt).toBeInstanceOf(Date);
+      expect(state.inserts).toHaveLength(1);
+    });
+
+    it('does not revoke others when flag is not set', async () => {
+      const state: MockState = { inserts: [], updates: [], selectResults: [] };
+      const svc = await buildService(state);
+
+      await svc.issueTokenPair(makeUser());
+
+      expect(state.updates).toHaveLength(0);
+      expect(state.inserts).toHaveLength(1);
+    });
+  });
+
+  describe('isSessionActive', () => {
+    const sid = '0190a000-0000-7000-8000-0000000000aa';
+    const userId = '0190a000-0000-7000-8000-000000000001';
+
+    it('returns false for malformed sid', async () => {
+      const state: MockState = { inserts: [], updates: [], selectResults: [] };
+      const svc = await buildService(state);
+      await expect(svc.isSessionActive('garbage')).resolves.toBe(false);
+    });
+
+    it('returns false when row is missing', async () => {
+      const state: MockState = {
+        inserts: [],
+        updates: [],
+        selectResults: [[]],
+      };
+      const svc = await buildService(state);
+      await expect(svc.isSessionActive(sid)).resolves.toBe(false);
+    });
+
+    it('returns false when row is revoked', async () => {
+      const state: MockState = {
+        inserts: [],
+        updates: [],
+        selectResults: [
+          [
+            {
+              userId,
+              revokedAt: new Date(),
+              expiresAt: new Date(Date.now() + 60_000),
+            },
+          ],
+        ],
+      };
+      const svc = await buildService(state);
+      await expect(svc.isSessionActive(sid, userId)).resolves.toBe(false);
+    });
+
+    it('returns false when row is expired', async () => {
+      const state: MockState = {
+        inserts: [],
+        updates: [],
+        selectResults: [
+          [
+            {
+              userId,
+              revokedAt: null,
+              expiresAt: new Date(Date.now() - 1000),
+            },
+          ],
+        ],
+      };
+      const svc = await buildService(state);
+      await expect(svc.isSessionActive(sid, userId)).resolves.toBe(false);
+    });
+
+    it('returns false when userId does not match', async () => {
+      const state: MockState = {
+        inserts: [],
+        updates: [],
+        selectResults: [
+          [
+            {
+              userId: 'someone-else',
+              revokedAt: null,
+              expiresAt: new Date(Date.now() + 60_000),
+            },
+          ],
+        ],
+      };
+      const svc = await buildService(state);
+      await expect(svc.isSessionActive(sid, userId)).resolves.toBe(false);
+    });
+
+    it('returns true when row is active and userId matches', async () => {
+      const state: MockState = {
+        inserts: [],
+        updates: [],
+        selectResults: [
+          [
+            {
+              userId,
+              revokedAt: null,
+              expiresAt: new Date(Date.now() + 60_000),
+            },
+          ],
+        ],
+      };
+      const svc = await buildService(state);
+      await expect(svc.isSessionActive(sid, userId)).resolves.toBe(true);
+    });
+  });
+
   it('rotates a valid refresh token, issues new pair, revokes old', async () => {
     const tokenId = '0190a000-0000-7000-8000-000000001111';
     const secret = 'validsecret';
@@ -231,6 +357,9 @@ describe('TokensService', () => {
             tokenHash,
             issuedAt: new Date(),
             expiresAt: new Date(Date.now() + 60_000),
+            absoluteExpiresAt: new Date(Date.now() + 86_400_000),
+            lastUsedAt: new Date(),
+            rememberMe: true,
             revokedAt: null,
             replacedById: null,
             userAgent: null,
@@ -252,5 +381,112 @@ describe('TokensService', () => {
     expect(state.updates).toHaveLength(1);
     expect(state.updates[0].revokedAt).toBeInstanceOf(Date);
     expect(state.updates[0].replacedById).toBeDefined();
+    expect(state.updates[0].lastUsedAt).toBeInstanceOf(Date);
+  });
+
+  describe('rememberMe and timeouts', () => {
+    it('issues a short-lived refresh token when rememberMe is false', async () => {
+      const state: MockState = { inserts: [], updates: [], selectResults: [] };
+      const svc = await buildService(state);
+
+      await svc.issueTokenPair(makeUser(), {}, undefined, {
+        rememberMe: false,
+      });
+
+      const inserted = state.inserts[0];
+      const ttlMs = inserted.expiresAt.getTime() - Date.now();
+      // 12h = 43_200_000ms; allow some slack
+      expect(ttlMs).toBeLessThanOrEqual(12 * 60 * 60 * 1000 + 1000);
+      expect(ttlMs).toBeGreaterThan(11 * 60 * 60 * 1000);
+      expect(inserted.rememberMe).toBe(false);
+      expect(inserted.absoluteExpiresAt).toBeInstanceOf(Date);
+    });
+
+    it('issues a long-lived refresh token when rememberMe is true', async () => {
+      const state: MockState = { inserts: [], updates: [], selectResults: [] };
+      const svc = await buildService(state);
+
+      await svc.issueTokenPair(makeUser(), {}, undefined, {
+        rememberMe: true,
+      });
+
+      const inserted = state.inserts[0];
+      const ttlMs = inserted.expiresAt.getTime() - Date.now();
+      // 30d
+      expect(ttlMs).toBeGreaterThan(29 * 86_400_000);
+      expect(inserted.rememberMe).toBe(true);
+    });
+
+    it('rejects rotation when family is past absolute lifetime', async () => {
+      const tokenId = '0190a000-0000-7000-8000-0000000022aa';
+      const secret = 's';
+      const tokenHash = createHash('sha256').update(secret).digest('hex');
+      const state: MockState = {
+        inserts: [],
+        updates: [],
+        selectResults: [
+          [
+            {
+              id: tokenId,
+              userId: 'u',
+              familyId: 'fam',
+              tokenHash,
+              issuedAt: new Date(),
+              expiresAt: new Date(Date.now() + 60_000),
+              absoluteExpiresAt: new Date(Date.now() - 1000),
+              lastUsedAt: new Date(),
+              rememberMe: true,
+              revokedAt: null,
+              replacedById: null,
+              userAgent: null,
+              ipAddress: null,
+              createdAt: new Date(),
+            },
+          ],
+        ],
+      };
+      const svc = await buildService(state);
+      await expect(
+        svc.rotateRefreshToken(`${tokenId}.${secret}`),
+      ).rejects.toThrow(/lifetime/i);
+      // family revoked
+      expect(state.updates).toHaveLength(1);
+    });
+
+    it('rejects rotation after idle timeout and revokes family', async () => {
+      const tokenId = '0190a000-0000-7000-8000-0000000033bb';
+      const secret = 's';
+      const tokenHash = createHash('sha256').update(secret).digest('hex');
+      const fifteenDaysAgo = new Date(Date.now() - 15 * 86_400_000);
+      const state: MockState = {
+        inserts: [],
+        updates: [],
+        selectResults: [
+          [
+            {
+              id: tokenId,
+              userId: 'u',
+              familyId: 'fam',
+              tokenHash,
+              issuedAt: fifteenDaysAgo,
+              expiresAt: new Date(Date.now() + 60_000),
+              absoluteExpiresAt: new Date(Date.now() + 86_400_000),
+              lastUsedAt: fifteenDaysAgo,
+              rememberMe: true,
+              revokedAt: null,
+              replacedById: null,
+              userAgent: null,
+              ipAddress: null,
+              createdAt: fifteenDaysAgo,
+            },
+          ],
+        ],
+      };
+      const svc = await buildService(state);
+      await expect(
+        svc.rotateRefreshToken(`${tokenId}.${secret}`),
+      ).rejects.toThrow(/idle/i);
+      expect(state.updates).toHaveLength(1);
+    });
   });
 });

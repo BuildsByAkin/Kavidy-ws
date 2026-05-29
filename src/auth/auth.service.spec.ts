@@ -17,6 +17,7 @@ function makeUser(overrides: Partial<UserRow> = {}): UserRow {
     emailVerifiedAt: null,
     status: 'active',
     role: 'user',
+    onboardingStatus: 'active',
     displayName: null,
     avatarUrl: null,
     dateOfBirth: '1990-01-01',
@@ -243,6 +244,26 @@ describe('AuthService', () => {
       expect(result.tokens).toEqual(tokenPair);
       expect(users.touchLastLogin).toHaveBeenCalledWith(user.id);
     });
+
+    it('revokes other sessions on successful login (single-device)', async () => {
+      const hash = await argon2.hash('correct-password', {
+        type: argon2.argon2id,
+      });
+      const user = makeUser({ passwordHash: hash });
+      users.findByEmail.mockResolvedValue(user);
+
+      await svc.login({
+        email: 'jane@example.com',
+        password: 'correct-password',
+      });
+
+      expect(tokens.issueTokenPair).toHaveBeenCalledWith(
+        user,
+        expect.anything(),
+        undefined,
+        expect.objectContaining({ revokeOthers: true }),
+      );
+    });
   });
 
   describe('loginWithGoogle', () => {
@@ -373,27 +394,109 @@ describe('AuthService', () => {
     });
   });
 
-  describe('completeProfile', () => {
+  describe('changePassword', () => {
+    it('rejects when user has no password (oauth-only)', async () => {
+      users.findById.mockResolvedValue(makeUser({ passwordHash: null }));
+      await expect(
+        svc.changePassword('u', 'whatever', 'a-new-password'),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+    });
+
+    it('rejects when current password is incorrect', async () => {
+      const hash = await argon2.hash('correct-current');
+      users.findById.mockResolvedValue(makeUser({ passwordHash: hash }));
+      await expect(
+        svc.changePassword('u', 'wrong-current', 'a-new-password'),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+    });
+
+    it('rejects when new password equals current password', async () => {
+      const hash = await argon2.hash('same-password-1');
+      users.findById.mockResolvedValue(makeUser({ passwordHash: hash }));
+      await expect(
+        svc.changePassword('u', 'same-password-1', 'same-password-1'),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('updates password hash and revokes all refresh tokens on success', async () => {
+      const user = makeUser({
+        id: 'user-id-1',
+        passwordHash: await argon2.hash('current-password-1'),
+      });
+      users.findById.mockResolvedValue(user);
+      users.updateProfile = jest.fn().mockResolvedValue(user);
+      tokens.revokeAllForUser = jest.fn().mockResolvedValue(3);
+
+      await svc.changePassword(
+        'user-id-1',
+        'current-password-1',
+        'brand-new-password-1',
+      );
+
+      expect(users.updateProfile).toHaveBeenCalledWith(
+        'user-id-1',
+        expect.objectContaining({ passwordHash: expect.any(String) }),
+        expect.anything(),
+      );
+      const newHash = users.updateProfile.mock.calls[0][1].passwordHash;
+      expect(newHash).not.toBe('brand-new-password-1');
+      await expect(
+        argon2.verify(newHash, 'brand-new-password-1'),
+      ).resolves.toBe(true);
+      expect(tokens.revokeAllForUser).toHaveBeenCalledWith(
+        'user-id-1',
+        undefined,
+        expect.anything(),
+      );
+      expect(db.transaction).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('onboard', () => {
+    it('rejects when user is not incomplete', async () => {
+      users.findById.mockResolvedValue(
+        makeUser({ onboardingStatus: 'active' }),
+      );
+      await expect(
+        svc.onboard('u', { dateOfBirth: '1985-05-05', state: 'CA' }),
+      ).rejects.toBeDefined();
+    });
+
     it('rejects when underage', async () => {
-      users.findById.mockResolvedValue(makeUser());
+      users.findById.mockResolvedValue(
+        makeUser({ onboardingStatus: 'incomplete' }),
+      );
       const now = new Date();
       await expect(
-        svc.completeProfile('u', {
+        svc.onboard('u', {
           dateOfBirth: `${now.getUTCFullYear() - 10}-01-01`,
           state: 'CA',
         }),
       ).rejects.toBeDefined();
     });
 
-    it('updates profile with normalized state', async () => {
-      users.findById.mockResolvedValue(makeUser());
-      users.updateProfile = jest
-        .fn()
-        .mockResolvedValue(
-          makeUser({ state: 'NY', dateOfBirth: '1985-05-05' }),
-        );
+    it('rejects restricted state', async () => {
+      users.findById.mockResolvedValue(
+        makeUser({ onboardingStatus: 'incomplete' }),
+      );
+      await expect(
+        svc.onboard('u', { dateOfBirth: '1985-05-05', state: 'WA' }),
+      ).rejects.toBeDefined();
+    });
 
-      const out = await svc.completeProfile('u', {
+    it('flips onboarding to active and normalizes state', async () => {
+      users.findById.mockResolvedValue(
+        makeUser({ onboardingStatus: 'incomplete' }),
+      );
+      users.updateProfile = jest.fn().mockResolvedValue(
+        makeUser({
+          state: 'NY',
+          dateOfBirth: '1985-05-05',
+          onboardingStatus: 'active',
+        }),
+      );
+
+      const out = await svc.onboard('u', {
         dateOfBirth: '1985-05-05',
         state: 'ny',
       });
@@ -401,8 +504,10 @@ describe('AuthService', () => {
         dateOfBirth: '1985-05-05',
         state: 'NY',
         country: 'US',
+        onboardingStatus: 'active',
       });
       expect(out.state).toBe('NY');
+      expect(out.onboardingStatus).toBe('active');
     });
   });
 

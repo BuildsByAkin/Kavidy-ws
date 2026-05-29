@@ -24,7 +24,7 @@ export interface JwtAccessPayload {
   sub: string;
   email: string;
   role: UserRow['role'];
-  sid?: string;
+  sid: string;
 }
 
 export interface IssuedTokenPair {
@@ -43,12 +43,21 @@ function sha256(input: string): string {
   return createHash('sha256').update(input).digest('hex');
 }
 
+export interface IssueOptions {
+  revokeOthers?: boolean;
+  rememberMe?: boolean;
+  absoluteExpiresAt?: Date;
+}
+
 @Injectable()
 export class TokensService {
   private readonly logger = new Logger(TokensService.name);
   private readonly accessSecret: string;
   private readonly accessTtl: string;
   private readonly refreshTtlMs: number;
+  private readonly refreshShortTtlMs: number;
+  private readonly refreshAbsoluteTtlMs: number;
+  private readonly refreshIdleTtlMs: number;
 
   constructor(
     private readonly jwt: JwtService,
@@ -59,27 +68,63 @@ export class TokensService {
     this.accessTtl = this.config.get('JWT_ACCESS_TTL', { infer: true });
     const days = this.config.get('JWT_REFRESH_TTL_DAYS', { infer: true });
     this.refreshTtlMs = days * 24 * 60 * 60 * 1000;
+    const shortHours = this.config.get('JWT_REFRESH_SHORT_TTL_HOURS', {
+      infer: true,
+    });
+    this.refreshShortTtlMs = shortHours * 60 * 60 * 1000;
+    const absDays = this.config.get('JWT_REFRESH_ABSOLUTE_TTL_DAYS', {
+      infer: true,
+    });
+    this.refreshAbsoluteTtlMs = absDays * 24 * 60 * 60 * 1000;
+    const idleDays = this.config.get('JWT_REFRESH_IDLE_TTL_DAYS', {
+      infer: true,
+    });
+    this.refreshIdleTtlMs = idleDays * 24 * 60 * 60 * 1000;
   }
 
   async issueTokenPair(
     user: UserRow,
     ctx: RequestContext = {},
     familyId?: string,
+    options: IssueOptions = {},
   ): Promise<IssuedTokenPair> {
     const refreshSecret = this.generateRefreshSecret();
-    const refreshExpiresAt = new Date(Date.now() + this.refreshTtlMs);
+    const rememberMe = options.rememberMe ?? true;
+    const now = Date.now();
+    const ttlMs = rememberMe ? this.refreshTtlMs : this.refreshShortTtlMs;
+    const refreshExpiresAt = new Date(now + ttlMs);
+    const absoluteExpiresAt =
+      options.absoluteExpiresAt ?? new Date(now + this.refreshAbsoluteTtlMs);
+    if (refreshExpiresAt > absoluteExpiresAt) {
+      refreshExpiresAt.setTime(absoluteExpiresAt.getTime());
+    }
 
     const id = randomUUID();
     const family = familyId ?? randomUUID();
 
-    await this.db.insert(refreshTokens).values({
-      id,
-      userId: user.id,
-      familyId: family,
-      tokenHash: sha256(refreshSecret),
-      expiresAt: refreshExpiresAt,
-      userAgent: ctx.userAgent ?? null,
-      ipAddress: ctx.ipAddress ?? null,
+    await this.db.transaction(async (tx) => {
+      if (options.revokeOthers) {
+        await tx
+          .update(refreshTokens)
+          .set({ revokedAt: new Date() })
+          .where(
+            and(
+              eq(refreshTokens.userId, user.id),
+              isNull(refreshTokens.revokedAt),
+            ),
+          );
+      }
+      await tx.insert(refreshTokens).values({
+        id,
+        userId: user.id,
+        familyId: family,
+        tokenHash: sha256(refreshSecret),
+        expiresAt: refreshExpiresAt,
+        absoluteExpiresAt,
+        rememberMe,
+        userAgent: ctx.userAgent ?? null,
+        ipAddress: ctx.ipAddress ?? null,
+      });
     });
 
     const accessToken = await this.signAccessToken(user, id);
@@ -120,8 +165,20 @@ export class TokensService {
       throw new UnauthorizedException('Refresh token reused');
     }
 
-    if (row.expiresAt.getTime() <= Date.now()) {
+    const now = Date.now();
+    if (row.expiresAt.getTime() <= now) {
       throw new UnauthorizedException('Refresh token expired');
+    }
+    if (row.absoluteExpiresAt && row.absoluteExpiresAt.getTime() <= now) {
+      await this.revokeFamily(row.familyId);
+      throw new UnauthorizedException('Session lifetime exceeded');
+    }
+    if (
+      row.lastUsedAt &&
+      now - row.lastUsedAt.getTime() > this.refreshIdleTtlMs
+    ) {
+      await this.revokeFamily(row.familyId);
+      throw new UnauthorizedException('Session idle timeout');
     }
 
     const user = await this.loadUser(row.userId);
@@ -132,12 +189,19 @@ export class TokensService {
       throw new UnauthorizedException('User is not active');
     }
 
-    const tokens = await this.issueTokenPair(user, ctx, row.familyId);
+    const tokens = await this.issueTokenPair(user, ctx, row.familyId, {
+      rememberMe: row.rememberMe ?? true,
+      absoluteExpiresAt: row.absoluteExpiresAt ?? undefined,
+    });
 
     const newId = this.decodeRefreshToken(tokens.refreshToken)!.id;
     await this.db
       .update(refreshTokens)
-      .set({ revokedAt: new Date(), replacedById: newId })
+      .set({
+        revokedAt: new Date(),
+        replacedById: newId,
+        lastUsedAt: new Date(),
+      })
       .where(eq(refreshTokens.id, row.id));
 
     return { user, tokens };
@@ -200,6 +264,24 @@ export class TokensService {
       .update(refreshTokens)
       .set({ revokedAt: new Date() })
       .where(eq(refreshTokens.id, sessionId));
+    return true;
+  }
+
+  async isSessionActive(sid: string, userId?: string): Promise<boolean> {
+    if (!sid || !/^[0-9a-f-]{36}$/i.test(sid)) return false;
+    const [row] = await this.db
+      .select({
+        userId: refreshTokens.userId,
+        revokedAt: refreshTokens.revokedAt,
+        expiresAt: refreshTokens.expiresAt,
+      })
+      .from(refreshTokens)
+      .where(eq(refreshTokens.id, sid))
+      .limit(1);
+    if (!row) return false;
+    if (userId && row.userId !== userId) return false;
+    if (row.revokedAt) return false;
+    if (row.expiresAt.getTime() <= Date.now()) return false;
     return true;
   }
 

@@ -42,28 +42,31 @@ export const SignupSchema = z.object({
   dateOfBirth: dateOfBirthSchema,
   state: stateSchema,
   country: countrySchema.optional(),
+  rememberMe: z.boolean().optional(),
 });
 export class SignupDto extends createZodDto(SignupSchema) {}
 
 export const LoginSchema = z.object({
   email: emailSchema,
   password: z.string().min(1).max(128),
+  rememberMe: z.boolean().optional(),
 });
 export class LoginDto extends createZodDto(LoginSchema) {}
 
 export const GoogleSchema = z.object({
   idToken: z.string().min(10),
   username: usernameSchema.optional(),
+  rememberMe: z.boolean().optional(),
 });
 export class GoogleDto extends createZodDto(GoogleSchema) {}
 
 export const RefreshSchema = z.object({
-  refreshToken: z.string().min(10),
+  refreshToken: z.string().min(10).optional(),
 });
 export class RefreshDto extends createZodDto(RefreshSchema) {}
 
 export const LogoutSchema = z.object({
-  refreshToken: z.string().min(10),
+  refreshToken: z.string().min(10).optional(),
 });
 export class LogoutDto extends createZodDto(LogoutSchema) {}
 
@@ -78,9 +81,15 @@ export const ResetPasswordSchema = z.object({
 });
 export class ResetPasswordDto extends createZodDto(ResetPasswordSchema) {}
 
-export const CompleteProfileSchema = z.object({
+export const ChangePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(128),
+  newPassword: passwordSchema,
+});
+export class ChangePasswordDto extends createZodDto(ChangePasswordSchema) {}
+
+export const OnboardSchema = z.object({
   dateOfBirth: dateOfBirthSchema,
   state: stateSchema,
   country: countrySchema.optional(),
 });
-export class CompleteProfileDto extends createZodDto(CompleteProfileSchema) {}
+export class OnboardDto extends createZodDto(OnboardSchema) {}
