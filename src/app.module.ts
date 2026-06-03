@@ -8,6 +8,7 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
+import { BetsModule } from './bets/bets.module';
 import { EmailModule } from './common/email/email.module';
 import { ZodHttpExceptionFilter } from './common/filters/zod-http-exception.filter';
 import { GeoModule } from './common/geo/geo.module';
@@ -15,6 +16,7 @@ import type { Env } from './config/env';
 import { validateEnv } from './config/env';
 import { DatabaseModule } from './database/database.module';
 import { IdeasModule } from './ideas/ideas.module';
+import { MarketsModule } from './markets/markets.module';
 import { SessionsModule } from './sessions/sessions.module';
 import { StreamersModule } from './streamers/streamers.module';
 import { UsersModule } from './users/users.module';
@@ -50,6 +52,8 @@ import { WalletModule } from './wallet/wallet.module';
     WalletModule,
     StreamersModule,
     IdeasModule,
+    MarketsModule,
+    BetsModule,
   ],
   controllers: [AppController],
   providers: [

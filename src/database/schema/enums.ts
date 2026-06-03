@@ -49,3 +49,41 @@ export const streamerPlatformEnum = pgEnum('streamer_platform', [
   'kick',
   'twitch',
 ]);
+
+export const marketStatusEnum = pgEnum('market_status', [
+  'proposed',
+  'open',
+  'closed',
+  'resolved_yes',
+  'resolved_no',
+  'void',
+  'abandoned',
+]);
+
+export const marketConfidenceEnum = pgEnum('market_confidence', [
+  'low',
+  'medium',
+  'high',
+]);
+
+export const creatorPlatformEnum = pgEnum('creator_platform', [
+  'twitch',
+  'kick',
+  'youtube',
+]);
+
+export const betEntryStatusEnum = pgEnum('bet_entry_status', [
+  'pending',
+  'won',
+  'lost',
+  'void',
+]);
+
+export const betPickStatusEnum = pgEnum('bet_pick_status', [
+  'pending',
+  'won',
+  'lost',
+  'void',
+]);
+
+export const betPickDirectionEnum = pgEnum('bet_pick_direction', ['yes', 'no']);

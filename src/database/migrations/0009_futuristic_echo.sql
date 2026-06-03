@@ -1,0 +1,1 @@
+ALTER TYPE "public"."market_status" ADD VALUE 'closed' BEFORE 'resolved_yes';

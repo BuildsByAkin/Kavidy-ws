@@ -9,6 +9,7 @@ import { AuthGuard } from '@nestjs/passport';
 import type { Request } from 'express';
 import type { AuthenticatedUser } from '../../common/decorators/current-user.decorator';
 import { UsersService } from '../../users/users.service';
+import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { SKIP_ONBOARDING_KEY } from '../decorators/skip-onboarding.decorator';
 import { TokensService } from '../tokens.service';
 
@@ -23,6 +24,12 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isPublic) return true;
+
     const ok = (await super.canActivate(context)) as boolean;
     if (!ok) return false;
 

@@ -12,3 +12,6 @@ export * from './promo-codes';
 export * from './idempotency-keys';
 export * from './streamers';
 export * from './posts';
+export * from './markets';
+export * from './bet-entries';
+export * from './bet-picks';

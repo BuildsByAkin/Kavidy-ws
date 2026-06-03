@@ -52,6 +52,8 @@ export const envSchema = z.object({
   THROTTLE_TTL_MS: z.coerce.number().int().positive().default(60_000),
   THROTTLE_LIMIT: z.coerce.number().int().positive().default(100),
 
+  MARKETS_WORKER_API_KEY: z.string().min(32),
+
   PAYMENT_SUCCESS_URL: z
     .string()
     .url()

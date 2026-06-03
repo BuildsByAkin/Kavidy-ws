@@ -24,7 +24,7 @@ async function bootstrap() {
 
   const server = app.getHttpServer();
   server.headersTimeout = 65_000;
-  server.requestTimeout = 30_000;
+  server.requestTimeout = 0;
   server.keepAliveTimeout = 60_000;
   server.maxHeadersCount = 100;
 
